@@ -1,5 +1,10 @@
 const TCS = artifacts.require("./TCS.sol");
 
 contract("TCS", function(accounts) {
-  // STUB.
+  describe("#isValidOrder", () => {
+     const signerAddress = accounts[0];
+     const orderHash = "";
+
+     describe("")
+  });
 });
