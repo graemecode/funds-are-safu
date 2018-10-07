@@ -1,27 +1,31 @@
-pragma solidity ^0.4.18;
+pragma solidity ^0.4.24;
+pragma experimental ABIEncoderV2;
 
 import "./dependencies/IExchange.sol";
 
-
-contract TSC {
+contract TCS {
 	// We define an exchange using the 0x exchange interface.
 	IExchange internal EXCHANGE;
+	// Refers to the type of validation that needs to occur.
+	byte constant internal VALIDATOR_SIGNATURE_BYTE = "\x05";
+
+	bytes internal TX_ORIGIN_SIGNATURE;
 
 	// The creator of the current contract.
 	address owner;
 
 	// The agents who are able to sign 0x orders.
-	mapping (address => bool) public authorizedAgents;
+	mapping (address => bool) public authorizedSigners;
 
-	event AgentAuthorized(address agent);
+	event SignerAuthorized(address agent);
 
-	event AgentRemoved(address agent);
+	event SignerUnauthorized(address agent);
 
-	// 0x Order.
+	// 0x Order, retrieved from 0x monorepo.
 	struct Order {
 		address makerAddress;           // Address that created the order.
 		address takerAddress;           // Address that is allowed to fill the order. If set to 0, any address is allowed to fill the order.
-		address feeRecipientAddress;    // Address that will recieve fees when order is filled.
+		address feeRecipientAddress;    // Address that will receive fees when order is filled.
 		address senderAddress;          // Address that is allowed to call Exchange contract methods that affect this order. If set to 0, any address is allowed to call these methods.
 		uint256 makerAssetAmount;       // Amount of makerAsset being offered by maker. Must be greater than 0.
 		uint256 takerAssetAmount;       // Amount of takerAsset being bid on by maker. Must be greater than 0.
@@ -33,10 +37,15 @@ contract TSC {
 		bytes takerAssetData;           // Encoded data that can be decoded by a specified proxy contract when transferring takerAsset. The last byte references the id of this proxy.
 	}
 
-	constructor(address _owner, address _exchange) public {
+	constructor (address _owner, address _exchange)
+		public
+	{
+		// Given the address of the 0x exchange, we establish connection with that exchange.
 		EXCHANGE = IExchange(_exchange);
 
-		this.owner = _owner;
+		owner = _owner;
+
+		TX_ORIGIN_SIGNATURE = abi.encodePacked(address(this), VALIDATOR_SIGNATURE_BYTE);
 	}
 
 	modifier onlyOwner() {
@@ -44,27 +53,37 @@ contract TSC {
 	}
 
 	modifier senderIsAuthorizedAgent() {
-		if (authorizedAgents[msg.sender]) _;
+		if (authorizedSigners[msg.sender]) _;
 	}
 
-	function public addAuthorizedAgent(address agent) {
-		AgentAuthorized(agent);
+	function addAuthorizedSigner(address _signer)
+		public
+		onlyOwner
+	{
+		SignerAuthorized(_signer);
 
-		authorizedAgents[agent] = true;
+		authorizedSigners[_signer] = true;
 	}
 
-	function public removeAuthorizedAgent(address agent) onlyOwner {
-		AgentRemoved(agent);
+	function removeAuthorizedSigner(address _signer)
+		public
+		onlyOwner
+	{
+		SignerUnauthorized(_signer);
 
-		authorizedAgents[agent] = false;
+		authorizedSigners[_signer] = false;
 	}
 
-	function public fillOrder(
+	function fillOrder (
 		Order memory order,
 		uint256 takerAssetFillAmount,
 		uint256 salt,
 		bytes memory orderSignature
-	) returns (bool) senderIsAuthorizedAgent {
+	)
+		public
+		senderIsAuthorizedAgent
+		returns (bool)
+	{
 		// Encode arguments into byte array.
 		bytes memory data = abi.encodeWithSelector(
 			EXCHANGE.fillOrder.selector,
@@ -82,18 +101,39 @@ contract TSC {
 	}
 
 	// Returns true if any of the authorized agents signed the order.
-	isValidSignature(
-		bytes32 orderHash,
-		address signer,
-		bytes signatures
-	) public view returns(bool)
+	function isValidSignature(
+		bytes32 _orderHash,
+		address _signer,
+		bytes _signature
+	)
+		public
+		view
+		returns(bool)
 	{
-		if (authorizedAgents[signer]) {
-				
-
-			return true;
+		if (!authorizedSigners[_signer]) {
+			return false;
 		}
+	
+		require(
+			_signature.length == 65,
+			"LENGTH_65_REQUIRED"
+		);
 
-		return false;
+		// Unpack the signature.
+		uint8 v = uint8(_signature[0]);
+		bytes32 r = readBytes32(_signature, 1);
+		bytes32 s = readBytes32(_signature, 33);
+
+		// Get the recovery address, and compare it to the given signer address.
+		address recoveredAddress = ecrecover(_orderHash, v, r, s);
+		return _signer == recoveredAddress;
+	}
+
+	function readBytes32(bytes data, uint256 index) internal pure returns (bytes32 o) {
+		if (data.length / 32 > index) {
+			assembly {
+				o := mload(add(data, add(32, mul(32, index))))
+			}
+		}
 	}
 }
