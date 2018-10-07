@@ -6,9 +6,10 @@ contract TSC {
 	event Something(address indexed _from, address indexed _to, uint256 _value);
 
 	constructor() public {
+		// STUB.
 	}
 
 	function doSomething() public returns(bool success) {
-
+		// STUB.
 	}
 }
